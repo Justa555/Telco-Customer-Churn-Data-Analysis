@@ -1,0 +1,760 @@
+---
+title: "Lista 1"
+subtitle: "Eksploracja danych"
+author: "Justyna Dudek, album 287291 i Aleksandra Tylman, album 287294"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    toc: true
+    fig_caption: yes
+    fig_width: 5 
+    fig_height: 4 
+    number_sections: true
+    dev: cairo_pdf
+header-includes:
+   - \usepackage[OT4]{polski}
+   - \usepackage[utf8]{inputenc}
+   - \usepackage{graphicx}
+   - \usepackage{float}
+fontsize: 12pt 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,message=FALSE, warning=FALSE, fig.width=5, fig.height=6,fig.align = "center",fig.cap="", fig.pos="H",dev.args = list(png = list(type = "cairo")))
+library(dplyr)
+library(ggplot2)
+library(kableExtra)
+library(gridExtra)
+library(knitr)
+library(modeest)
+library(patchwork)
+library(xtable)
+library(e1071)
+options(xtbale.sanitize.colnames.functioin=identity)
+```
+
+# Etap 1 - Przygotowanie danych. Podstawowe informacje o danych
+
+## Wczytanie danych
+
+Wykorzystamy dane "WA_Fn-UseC_-Telco-Customer-Churn.csv"  zawierające informacje o klientach pewnej sieci telefonii komórkowej.
+
+```{r wczytanie_danych}
+dane_pierwotne<-read.csv(file="WA_Fn-UseC_-Telco-Customer-Churn.csv", stringsAsFactors = TRUE)
+```
+
+Pierwszym krokiem będzie sprawdzenie podstawowych informacji na temat rozpoznania typów danych.
+
+```{r sprawdzenie,echo=TRUE}
+str(dane_pierwotne)
+```
+Ponieważ nie zgadzają się zmienne *customerID* oraz *SeniorCitizen*, przekonwertujemy je na odpowiedni typ.
+
+```{r porpawa,echo=TRUE}
+dane_pierwotne$SeniorCitizen<-as.factor(dane_pierwotne$SeniorCitizen)
+levels(dane_pierwotne$SeniorCitizen)<-c("No","Yes")
+dane_pierwotne$customerID<-as.character(dane_pierwotne$customerID)
+```
+Po dokonanej zmianie dane są zakodowane poprawnie.
+
+## Podstawowe informacje o danych
+
+Rozmiar danych to `r dim(dane_pierwotne)[1]` na `r dim(dane_pierwotne)[2]`. Oznacza to, że analizowane dane to zbiór informacji składający się z `r dim(dane_pierwotne)[1]` obserwacji (klientów) i `r dim(dane_pierwotne)[2]` cech.
+
+Zbiór danych posiada informacje na temat cech ilościowych i jakościowych:
+
+* nazwy cech ilościowych; 
+
+``` {r ilosciowe}
+numeryczne<-sapply(dane_pierwotne,is.numeric)
+nazwy.n<-colnames(dane_pierwotne[,numeryczne])
+print(nazwy.n)
+
+```
+
+* nazwy cech jakościowych.
+
+``` {r jakosciowe}
+jakosciowe<-sapply(dane_pierwotne,is.factor)
+nazwy.j<-colnames(dane_pierwotne[,jakosciowe])
+print(nazwy.j)
+
+```
+
+
+W danych występuje cecha, która pełni rolę identyfikatorów klientów. Jest to *customerID*.
+Należy usunąć ją przed dalszą analizą. 
+```  {r usuwanie}
+dane_pierwotne<-dane_pierwotne[,2:21]
+```
+
+Po dokonanej zmianie wszystkie występujące cechy są przydatne w analizie.
+
+W danych występują dane brakujące. Najpierw sprawdzamy ile jest danych brakujących, następnie w której kolumnie się znajdują, a potem wyświetlamy w jaki sposób prezentujemy dane brakujące (w kodzie wyświetlamy zmienne *gender*, *SeniorCirizen*, *Partner*, *MonthlyCharges*, *TotalCharges* i *Churn*).
+
+``` {r dane_brakujace}
+sum(is.na(dane_pierwotne))
+columns<-apply(dane_pierwotne,2,function (x) sum(is.na(x)))
+columns
+dane_pierwotne[is.na(dane_pierwotne$TotalCharges),c(1,2,3,18,19,20)]
+```
+Dane brakujące są kodowane jako NA.
+
+W analizowanym zbiorze znajdują się również dane posiadające wartości oznaczające brak usług, tj. "No phone service","No internet signal". Są one powiązane z cechami *PhoneService* i *InternetService*. Mogą być one traktowane jako nietypowy sposób kodowania danych brakujących. Przykład jak wyglądają te nietypowe dane ( *gender*, *SeniorCirizen*, *Partner*, *MultipleLines*, *TotalCharges* i *Churn*).
+
+```{r nietypowe_dane,echo=TRUE}
+head(dane_pierwotne[dane_pierwotne$MultipleLines=="No phone service",c(1,2,3,7,19,20)])
+```
+
+Dla ułatwienia dalszej analizy zamienimy wartości "No phone service" i "No internet signal" na dane brakujące.
+
+```{r zamiana,echo=TRUE}
+dane_pierwotne<-dane_pierwotne %>% mutate(across(c(OnlineSecurity,OnlineBackup,DeviceProtection,TechSupport,StreamingTV,StreamingMovies),na_if,"No internet service")) 
+dane<-dane_pierwotne%>%mutate(across(c(MultipleLines),na_if,"No phone service"))
+```
+
+
+# Etap 2 - Analiza opisowa - wskaźniki sumaryczne i wykresy
+
+## Zmienne ilościowe 
+
+### Wyznaczenie podstawowych wskaźników sumarycznych.
+
+``` {r wskazniki,echo=FALSE,results='asis'}
+
+wskazniki_polozenia<-function(x) {
+  tibble(
+       minimum=min(x,na.rm=TRUE),
+       mediana=median(x,na.rm=TRUE),
+       srednia=mean(x,na.rm=TRUE),
+       maximum=max(x,na.rm=TRUE),
+       dominanta=mfv(x,na_rm=TRUE),
+       `średnia ucinana`=mean(x,trim=0.1,na.rm=TRUE))
+}
+
+wynik1<-wskazniki_polozenia(dane$tenure)
+wynik2<-wskazniki_polozenia(dane$MonthlyCharges)
+wynik3<-wskazniki_polozenia(dane$TotalCharges)
+
+tabela <- bind_rows(
+  tenure = wynik1,
+  MonthlyCharges = wynik2,
+  TotalCharges = wynik3,
+  .id = "zmienna")
+
+
+tab1a <- xtable( tabela, digits = 2, caption = "Miary położenia dla wszystkich klientów", label = "tab:tabela",align=c("","|p{2.8cm}|","p{1.6cm}|","p{1.4cm}|","p{1.3cm}|","p{1.7cm}|","p{1.8cm}|","p{1.5cm}|"))
+print(tab1a, type = "latex", table.placement = "H", comment=FALSE,include.rownames = FALSE, floating=TRUE)
+
+```
+
+``` {r wskazniki2,fig.width=6,results='asis'}
+
+wskazniki_rozporszenia<-function (x){
+  tibble(
+        wariancja=var(x,na.rm=TRUE), 
+       "odchylenie standradowe"=sd(x,na.rm=TRUE),
+       "rozstep proby"=max(x,na.rm=TRUE)-min(x,na.rm=TRUE),
+       "rozstep miedzykwartylowy"=IQR(x,na.rm=TRUE))
+}
+wynik4<-wskazniki_rozporszenia(dane$tenure)
+wynik5<-wskazniki_rozporszenia(dane$MonthlyCharges)
+wynik6<-wskazniki_rozporszenia(dane$TotalCharges)
+tabela1<-bind_rows(
+  tenure=wynik4,
+  MonthlyCharges=wynik5,
+  TotalCharges = wynik6,
+  .id = "zmienna"
+)
+
+
+tabela1 <- xtable( tabela1, digits = 2, row.names = TRUE, caption = "Miary rozproszenia dla wszystkich klientów", label = "tab:tabela1", align=c("","|p{2.8cm}|","p{2.1 cm}|","p{2.3 cm}|","p{2.6 cm}|","p{2.7cm}|"))
+print(tabela1, type = "latex", table.placement = "H", comment=FALSE,include.rownames = FALSE,floating=TRUE)
+
+```
+Tabela \ref{tab:tabela} przedstawia miary położenia, tzn. minimum, medianę, średnią, maksimum, dominantę i średnią ucinaną poszczególnych zmiennych ilościowych, natomiast tabela \ref{tab:tabela1} ukazuje ich miary rozproszenia, tj. wariancję, odchylenie standardowe, rozstęp próby i rozstęp międzykwartylowy. Z zestawienia wynika, że zakres liczby miesięcy przez którą klient pozostawał z firmą (zmiennej tenure) to od `r wynik1$minimum` do `r wynik1$maximum` miesięcy. Zakres opłaty naliczanej na konto klienta co miesięc (zmiennej MonthlyCharges) to od `r wynik2$minimum` do `r wynik2$maximum`, natomiast zakres łącznej opłaty zapłaconej przez klienta ogółem (zmiennej TotalCharges)  to od `r wynik3$minimum` do `r wynik3$maximum`
+
+
+### Wykresy rozkładów
+
+Tak prezentują się rozkłady poszczególnych zmiennych ilościowych.
+```{r wykresy_ilosciowe,fig.cap="Histogramy dla zmiennych ilościowych",echo=FALSE,fig.width=7,fig.height= 4.5}
+#Funkcja tworzacą histogram zmiennej ilosciowej
+histogram<-function(dane,cecha,kolor){
+  ggplot(dane,aes(x=.data[[cecha]],fill=.data[[cecha]]))+
+    geom_histogram(fill=kolor,bins=20,color="black")+
+    labs(x=cecha,y="liczebność")+
+    ggtitle(paste("Histogram zmiennej\n",cecha))+
+    theme_light()
+}
+
+
+p1<-histogram(dane,"tenure","cyan1")
+p2<-histogram(dane,"MonthlyCharges","greenyellow")
+p3<-histogram(dane,"TotalCharges","orchid3")
+    
+grid.arrange(p1, p2, p3, ncol=3)
+
+```
+Z zestawienia histogramów (Rysunek \ref{fig:wykresy_ilosciowe}) wynikają następujące obserwacje i wnioski: 
+
+* Zmienna tenure jest dwu-modalna, prawosstronnie skośna ze skośnością `r round(skewness(dane$tenure),2)`, czyli ma asymetryczny ogon z prawej strony;
+
+* Zmienna MonthlyCharges jest dwu-modalna ze skośnością `r round(skewness(dane$MonthlyCharges),2)`;
+
+* Zmienna TotalCharges ma rozkład prawostronnie skośny ze skośnością `r round(skewness(dane$TotalCharges,na.rm=TRUE),2)`, czyli ma asymetryczny ogon z prawej strony.
+
+Wynika z tego, że analizowane zmienne ilościowe mają różne rozkłady i nie wszystkie są symetryczne.
+
+``` {r wykresy,fig.cap="Wykresy pudełkowe,skrzypcowe i gętości dla zmiennych ilościowych",echo=FALSE,fig.width=7,fig.height= 8}
+#Funkcja tworząca wykres pudełkowy zmiennej ilościowej
+
+wykres_pudełkowy<-function(dane,cecha,kolor) {
+  ggplot(dane,aes(x=cecha,y=.data[[cecha]]))+
+    geom_violin(fill=kolor,trim=FALSE)+
+    geom_boxplot(width=0.2,fill="lightblue2")+
+    labs(x=cecha,y="częstość")+
+    ggtitle(paste("Wykres pudełkowy \n zmiennej ",cecha))+
+    theme(plot.title = element_text(size = 10))+
+    theme_light()
+}
+p1<-wykres_pudełkowy(dane,"tenure","cyan1")
+p2<-wykres_pudełkowy(dane,"MonthlyCharges","greenyellow")
+p3<-wykres_pudełkowy(dane,"TotalCharges","orchid3")
+
+#Funkcje tworzące wykres gęstości
+wykres_gestosci<-function(dane,cecha,kolor){
+  ggplot(dane,aes(x=.data[[cecha]]))+
+    geom_density(fill=kolor,color="black",alpha=0.9)+
+    labs(x=cecha,title=paste("Wykres gęstości\n zmiennej",cecha))+
+    theme(plot.title = element_text(size = 3))+
+    theme_light()
+}
+
+p4<-wykres_gestosci(dane,"tenure","cyan1")
+p5<-wykres_gestosci(dane,"MonthlyCharges","greenyellow")
+p6<-wykres_gestosci(dane,"TotalCharges","orchid3")
+    
+grid.arrange(p1, p4, p2, p5, p3, p6, ncol=2)
+```
+
+Rysunek (\ref {fig:wykresy}) prezentuje, że największą zmiennością charakteryzuje się kwota opłaty płaconej przez klienta co miesiąc (zmienna MonthlyCharges). 
+
+
+### Wykresy rozrzutów par zmiennych ciągłych
+
+``` {r wykres_rozrzutu1,fig.cap="Wykres rozrzutu zmiennej Totatl Charges i tenure", fig.height=3, echo=FALSE}
+wykres_rozrzutu<- function(dane,cecha1,cecha2,kolor){
+  ggplot(dane,aes(x=.data[[cecha1]],y=.data[[cecha2]]))+
+  geom_point(col=kolor)+
+  geom_smooth(method = "lm", se = TRUE, color = "black",  fill="orange",size = 0.5)+
+  labs(x = cecha1, y = cecha2,
+       title = paste("Zależność",cecha2,"\nod",cecha1))+
+  theme_light()
+}
+
+wykres_rozrzutu(dane,"tenure","TotalCharges","cyan")
+```
+Z Rysunku \ref{fig:wykres_rozrzutu1} wynika, że liczba miesięcy, przez którą klient pozostawał w firmie (zmienna tenure) wpływa na łączną kwotę ogółem wydaną przez niego w czasie (zmienna TotalCharges). Im dłużej nabywca korzystał z usług firmy telekomunikacyjnej, tym łącznie musiał więcej zapłacić.
+```{r wykres_rozrzutu2,fig.cap="Wykres rozrzutu zmiennej tenure i MonthlyCharges", fig.height=3}
+wykres_rozrzutu(dane,"MonthlyCharges","tenure","greenyellow")
+```
+Według wykresu (Rysunek \ref{fig:wykres_rozrzutu2}) nie istnieje zależność między ilością miesięcy korzystania przez klienta z usług firmy telekomunikacyjnej (zmienna tenure) a miesięcznymi kosztami tych usług (zmienna MonthlyCharges)
+```{r wykres_rozrzutu3,fig.cap="Wykres rozrzutu zmiennej Totatl Charges i MonthlyCharges", fig.height=3}
+wykres_rozrzutu(dane,"MonthlyCharges","TotalCharges","orchid3")
+```
+
+Zależność między zmiennymi TotalCharges i Monthlycharges (Rysunek \ref{fig:wykres_rozrzutu3}) ukazuje, że wysokość miesięcznej opłaty (zmienna MonthlyCharges) wpływa na łączną kwotę zapłaconą przez klienta ogółem w czasie korzystania z usług telekomunikacyjnych (zmienna TotalCharges). Im większa była miesięczna płatność, tym łącznie klient wydał więcej pieniędzy na usługi telekomunikacyjne. 
+
+```{r rozrzut3d,fig.cap="Wykres zależności wszystkich zmiennych ciągłych",fig.height=4}
+library(scatterplot3d)
+scatterplot3d(dane$tenure,dane$MonthlyCharges,dane$TotalCharges,pch=16,color="steelblue",box=FALSE,xlab="tenure",ylab="MonthlyCharges",zlab="TotalCharges",cex.axis =0.5 )
+
+```
+Z rysunku \ref{fig:rozrzut3d} można zaobserwować zależność pomiędzy trzema zmiennymi ciągłymi. Zarówno długość korzystania z usług przez klienta (zmienna tenure), jak i wysokość miesięcznej opłaty (zmienna MonthlyCharges) znacząco wpływają na całkowity koszt ponoszony przez klienta (zmienna TotalCharges). Występuje tu intuicyjna zależność rosnąca - wraz ze wzrostem czasu trwania umowy oraz wysokości opłat miesięcznych rośnie również łączna kwota wydatków.
+
+## Zmienne jakościowe
+
+### Wyznaczenie podstawowych wskaźników sumarycznych
+
+
+``` {r wskaziniki_jakosciowe, results="asis", echo=FALSE}
+
+tabela<-function(x) {
+  x<-na.omit(x)
+  x<-droplevels(x) 
+  t<-table(x)
+  p<-prop.table(t)
+  tibble(
+    Kategoria=names(t),
+    Liczność = as.numeric(t),
+    Proporcja=paste(round(as.numeric(p)*100,2),"%"))
+}
+wynik1<-tabela(dane$OnlineSecurity)
+wynik2<-tabela(dane$TechSupport)
+wynik3<-tabela(dane$InternetService)
+wynik4<-tabela(dane$PaymentMethod)
+wynik5<-tabela(dane$PhoneService)
+wynik6<-tabela(dane$Contract)
+wynik7<-tabela(dane$PaperlessBilling)
+wynik8<-tabela(dane$StreamingMovies)
+wynik9<-tabela(dane$StreamingTV)
+wynik10<-tabela(dane$MultipleLines)
+tabelka <- bind_rows(
+  OnlineSecurity = wynik1,
+  TechSupport = wynik2,
+  InternetService = wynik3,
+  PaymentMethod=wynik4,
+  PhoneService=wynik5,
+  Contract=wynik6,
+  PaperlessBilling=wynik7,
+  StreamingMovies=wynik8,
+  StreamingTV=wynik9,
+  MultipleLines=wynik10,  
+  .id = "zmienna")
+
+tabelka <- tabelka %>%
+group_by(zmienna) %>%
+mutate(zmienna = ifelse(row_number() == 1, zmienna, "")) %>%
+ungroup()
+
+tabelaa <- xtable( tabelka, caption = "Miary wybranych zmiennych jakosciowych", label = "tab:tabela_jakosciowa",align=c("","|p{3cm}|","p{5cm}|","p{2cm}|","p{2cm}|"))
+print(tabelaa, type = "latex", table.placement = "H", comment=FALSE,include.rownames = FALSE, floating=TRUE)
+```
+
+Z tabeli \ref {tab:tabela_jakosciowa} można odczytać kilka ciekawych wniosków:
+
+* Aż `r wynik1$Proporcja[wynik1$Kategoria == "No"]` klientów nie posiada zabezpieczenia internetowego (zmienna OnlineSecurity);
+
+* `r wynik2$Proporcja[wynik2$Kategoria == "No"]`  klientów nie korzysta z usług serwisu technicznego (zmienna TechSupport);
+
+* Dostępu do Internetu nie posiada aż `r wynik3$Proporcja[wynik3$Kategoria == "No"]` użytkowników;
+
+* Najbardziej popularna wśród klientów jest technologia światłowodowa (`r wynik3$Kategoria[which.max(wynik3$Liczność)]`). Korzysta z niej `r wynik3$Proporcja[wynik3$Kategoria == "Fiber optic"]`;
+
+* Klienci najczęściej decydują się na płatność za pomocą `r wynik4$Kategoria[which.max(wynik4$Liczność)]`, a najrzadziej używając `r wynik4$Kategoria[which.min(wynik4$Liczność)]`;
+
+* Jedynie `r wynik5$Proporcja[wynik5$Kategoria=="No"]` klientów nie korzysta z usług telefonicznych;
+
+* Najczęstszym rodzajem podpisywanej umowy jest `r wynik6$Kategoria[which.max(wynik6$Liczność)]`, czyli umowa miesięczna;
+
+* `r wynik9$Proporcja[wynik9$Kategoria=="Yes"]` osób ogląda przez sieć transmisje z kanałów telewizyjnych, a `r wynik8$Proporcja[wynik8$Kategoria=="Yes"]` korzysta z możliwości oglądania filmów/seriali z portali streamingowych;
+
+* Telefon stacjonarny posiada `r wynik10$Proporcja[wynik10$Kategoria=="Yes"]` klientów;
+
+* Większość usługobiorców (bo aż `r wynik7$Proporcja[wynik7$Kategoria=="Yes"]`) otrzymuje swoje rachunki i faktury elektronicznie.
+
+### Wykresy rozkładów
+
+```{r wykresy_słupkowe, fig.width=7,fig.cap="Wykresy słupkowe wybranych zmiennych ilościowych",fig.height=4.5}
+wykres_słupkowy<-function(dane,cecha,paleta_kolorow){
+  tabelka<-tabela(dane[[cecha]])
+  ggplot(tabelka, aes(x = Kategoria, y = Liczność, fill = Kategoria)) +
+    geom_bar(stat = "identity",show.legend = FALSE) +
+    scale_fill_brewer(palette = paleta_kolorow) +
+    labs(
+      x = "Kategoria",
+      y = "Częstość"
+    ) +
+    ggtitle(paste("Częstość zmiennej \n", cecha))+
+    coord_flip()+
+    geom_text(aes(label=Liczność), hjust=1,vjust=0.5, size=4)+
+    theme_light()+
+    theme(axis.text.x = element_text(size=8,angle=45,hjust=1))
+}
+p1<-wykres_słupkowy(dane,"OnlineSecurity","PuRd")
+p2<-wykres_słupkowy(dane,"TechSupport","YIOrRd")
+p3<-wykres_słupkowy(dane,"InternetService","RdYlGn")
+p4<-wykres_słupkowy(dane,"PaymentMethod","Blues")
+
+
+grid.arrange(p1,p2,p3,p4,ncol=2)
+
+```
+
+Z Rysunku \ref{fig:wykresy_słupkowe} można odczytać częstość występowania poszczególnych kategorii zmiennych jakościowych. 
+Zaś tylko `r wynik1$Liczność[wynik1$Kategoria == "Yes"]` klientów korzysta z zabezpieczenia internetowe (zmienna OnlineSecurity), a `r wynik1$Liczność[wynik1$Kategoria == "No"]` usługobiorców nie korzysta z tej opcji. 
+
+Ponadto większość nabywców, bo aż `r wynik2$Liczność[wynik1$Kategoria == "No"]` nie korzysta z pomocy technicznej (zmienna TechSupport). Ta liczba znacznie przewyższa klienttów wspomagających się tą możliwością, których jest `r wynik2$Liczność[wynik1$Kategoria == "Yes"]`. 
+
+Zaskakujące jest, że aż `r wynik3$Liczność[wynik3$Kategoria == "No"]` ankietowanych nie posiada dostępu do Internetu (zmienna InternetService). Dla pozostałych osób najczęściej wybieranym sposobem dostawy Internetu jest światłowód (`r wynik3$Kategoria[which.max(wynik3$Liczność)]`) i aż `r wynik3$Liczność[wynik3$Kategoria == "Fiber optic"]` zainteresowanych zdecydowało się na te usługi. Drugim popularnym dostawcą jest DSL, z którego korzysta `r wynik3$Liczność[wynik3$Kategoria == "DSL"]`.
+
+Klienci decydują się aż na 4 metody płatnicze (zmienna PaymentMethod). W kolejśności od najbardziej do najmniej popularnych :
+
+* Czek elektroniczny(Electronic check) - `r wynik4$Liczność[wynik4$Kategoria == "Electronic check"]` klientów;
+
+* Czek wysłany pocztą (Mailed check) - `r wynik4$Liczność[wynik4$Kategoria == "Mailed check"]` klientów;
+
+* Automatyczny przelew bankowy (Bank transfer(automatic)) - `r wynik4$Liczność[wynik4$Kategoria == "Bank transfer (automatic)"]` klientów;
+
+* Automatyczna płatność kartą kredytową (Credit card (automatic)) -`r wynik4$Liczność[wynik4$Kategoria == "Credit card (automatic)"]` klientów.
+
+Kategorie *Mailed check*, *Credit card(automatic)* i *Bank transfer (automatic)* charakteryzują się podobną popularnością
+
+
+```{r wykresy_słupkowe2,fig.cap="Wykresy słupkowe wybranych zmiennych ilościowych z wysoko różniącymi się wartościami",fig.height=4.5,fig.width=7}
+p5<-wykres_słupkowy(dane,"PhoneService","PuRd")
+p6<-wykres_słupkowy(dane,"Contract","YIOrRd")
+p7<-wykres_słupkowy(dane,"PaperlessBilling","RdYlGn")
+grid.arrange(p5,p6,p7,ncol=2)
+```
+W przeciwieństwie do Rysunku \ref{fig:wykresy_słupkowe}, który przedstawiał typowe rozkłady zmiennych, Rysunek \ref{fig:wykresy_słupkowe2} prezentuje zmienne, dla których znacząco jest zachowany jakiś trend.
+Z usług telefonicznych korzysta  aż `r wynik5$Liczność[wynik5$Kategoria == "Yes"]`. Jak widać, jest to znacząco więcej, bo aż o `r  abs(wynik5$Liczność[wynik5$Kategoria == "Yes"]-wynik5$Liczność[wynik5$Kategoria == "No"])` klientów (tylko `r wynik5$Liczność[wynik5$Kategoria == "No"]` osób nie korzysta z serwisu telefonicznego).
+
+Klienci decydują się aż na 3 rodzaje umowy. W kolejności od najbardziej do najmniej popularnych:
+
+* `r wynik6$Liczność[wynik6$Kategoria == "Month-to-month"]` klientów decyduje się na podpisanie umowy opłacanej co miesiąc (Month-to-month);
+
+* `r wynik6$Liczność[wynik6$Kategoria == "Two year"]` usługobiorców płaci raz na dwa lata (Two year);
+
+* `r wynik6$Liczność[wynik6$Kategoria == "One year"]` kupujących wybrało płatność raz na rok (One year).
+
+Opcja `r wynik6$Kategoria[which.max(wynik6$Liczność)]` jest zdecydowanie dominującą i zyskała największą popularność.
+
+Dodatkowo widać, że aż `r wynik7$Liczność[wynik7$Kategoria == "Yes"]` kupujących odeszło z tradycyjnego sposobu opłacania faktur i przeniosła się do elektronicznego systemu opłacania rachunków. Tylko `r wynik7$Liczność[wynik7$Kategoria == "No"]` klientów zostało przy tradycyjnej metodzie otrzymywania opłat, co świadczy o trendzie przechodzenia na opcje elektroniczne.
+
+
+```{r słupkowe2,fig.cap="Wykresy słupkowe wybranych zmiennych ilościowych z wartościami bliskimi remisu",fig.height=4.5,fig.width=7}
+
+p8<-wykres_słupkowy(dane,"StreamingMovies","Blues")
+p9<-wykres_słupkowy(dane,"StreamingTV","PuRd")
+p10<-wykres_słupkowy(dane,"MultipleLines","YIOrRd")
+grid.arrange(p8,p9,p10,ncol=2)
+```
+
+Z Rysunku \ref{fig:słupkowe2} można zaobserwować częstość występowania poszczególnych kategorii zmiennych jakościowych dla których kategorie przyjmują podobne wartości. 
+Dokładnie `r wynik8$Liczność[wynik8$Kategoria == "Yes"]` użytkowników decyduje się korzystać z platform streamingowych do oglądania filmów/seriali. Niemniej jednak wciąż `r wynik8$Liczność[wynik8$Kategoria == "No"]` klientów nie używa tej usługi. Łatwo jednak zauważyć, że podział ukazuje, że klienci są mocno podzieleni w tej kwestii.
+Analogiczna, sytuacja występuje w przypadku telewizji internetowej (z usług korzysta `r wynik9$Liczność[wynik9$Kategoria == "Yes"]` klientów, a `r wynik9$Liczność[wynik9$Kategoria == "No"]` osób unika tej opcji) oraz posiadania telefonów stacjonarnych (opcję tą ma `r wynik10$Liczność[wynik10$Kategoria == "Yes"]` kupujących, a `r wynik10$Liczność[wynik10$Kategoria == "No"]` z nich nie dysponuje telefonem stacjonarnym). 
+
+
+# Etap 3 - Analiza opisowa z podziałem na grupy
+
+```{r nowe dane}
+dane_Churn<-dane[dane$Churn=="Yes",]
+dane_No_Churn<-dane[dane$Churn=="No",]
+```
+
+## Analiza zmiennych ilościowych z podziałem na lojalnych i odchodzących klientów
+
+```{r wskaźniki dwóch zmiennych, results='asis'}
+
+wynik1.1<-wskazniki_polozenia(dane_Churn$tenure)
+wynik2.1<-wskazniki_polozenia(dane_Churn$MonthlyCharges)
+wynik3.1<-wskazniki_polozenia(dane_Churn$TotalCharges)
+
+tabela.1a <- bind_rows(
+  tenure = wynik1.1,
+  MonthlyCharges = wynik2.1,
+  TotalCharges = wynik3.1,
+  .id = "zmienna")
+
+tab1a <- xtable( tabela.1a, digits = 3, row.names = TRUE, caption = "Miary położenia dla klientów, którzy zrezygnowali", label = "tab:tabela1a",align=c("","|p{2.8cm}|","p{1.6cm}|","p{1.4cm}|","p{1.3cm}|","p{1.7cm}|","p{1.8cm}|","p{1.5cm}|"))
+print(tab1a, type = "latex", table.placement = "H", comment=FALSE,include.rownames = FALSE,floating=TRUE)
+
+wynik1.2<-wskazniki_polozenia(dane_No_Churn$tenure)
+wynik2.2<-wskazniki_polozenia(dane_No_Churn$MonthlyCharges)
+wynik3.2<-wskazniki_polozenia(dane_No_Churn$TotalCharges)
+
+tabela.1b <- bind_rows(
+  tenure = wynik1.2,
+  MonthlyCharges = wynik2.2,
+  TotalCharges = wynik3.2,
+  .id = "zmienna")
+tab1b <- xtable( tabela.1b, digits = 3, row.names = TRUE, caption = "Miary położenia dla klientów, którzy nie zrezygnowali", label = "tab:tabela1b",align=c("","|p{2.8cm}|","p{1.6cm}|","p{1.4cm}|","p{1.3cm}|","p{1.7cm}|","p{1.8cm}|","p{1.5cm}|"))
+print(tab1b, type = "latex", table.placement = "H", comment=FALSE,include.rownames = FALSE,floating=TRUE)
+
+```
+Z zestawienia tabel \ref{tab:tabela1a} i \ref{tab:tabela1b} można odczytać, że dla klientów, którzy zrezygnowali, zakres zmiennej tenure wynosi od `r wynik1.1$minimum` do `r wynik1.1$maximum`, zmiennej MonthlyCharges od `r wynik2.1$minimum` do `r wynik2.1$maximum`, natomiast zmiennej TotalCharges od `r wynik3.1$minimum` do `r wynik3.1$maximum`.
+
+Dla klientów, którzy nie zrezygnowali, zmienna tenure przyjmuje wartości od `r wynik1.2$minimum` do `r wynik1.2$maximum`, zmienna MonthlyCharges od `r wynik2.2$minimum` do `r wynik2.2$maximum`, natomiast zmienna TotalCharges od `r wynik3.2$minimum` do `r wynik3.2$maximum`.  
+
+
+Wskaźniki wyliczone w tabelach wskazują, że zmienna tenure przyjmuje większe wartości dla klientów, którzy nie zrezygnowali z usług firmy. Podobnie łączne opłaty (TotalCharges) są raczej wyższe dla klientów lojalnych. Natomiast klienci, którzy zrezygnowali, zazwyczaj płacili wyższe miesięczne opłaty.
+
+```{r wskaźniki rozproszenie dwóch zmiennych,  results='asis'}
+
+wynik4.1<-wskazniki_rozporszenia(dane_Churn$tenure)
+wynik5.1<-wskazniki_rozporszenia(dane_Churn$MonthlyCharges)
+wynik6.1<-wskazniki_rozporszenia(dane_Churn$TotalCharges)
+tabela.2a<-bind_rows(
+  tenure=wynik4.1,
+  MonthlyCharges=wynik5.1,
+  TotalCharges = wynik6.1,
+  .id = "zmienna"
+)
+
+
+tab2a <- xtable( tabela.2a, digits = 3, row.names = TRUE, caption = "Miary rozproszenia dla klientów którzy zrezygnowali", label = "tab:tabela2a",align=c("","|p{2.8cm}|","p{2.1 cm}|","p{2.3 cm}|","p{2.6 cm}|","p{2.7cm}|"))
+print(tab2a, type = "latex", table.placement = "H", comment=FALSE,include.rownames = FALSE,floating=TRUE)
+
+wynik4.2<-wskazniki_rozporszenia(dane_No_Churn$tenure)
+wynik5.2<-wskazniki_rozporszenia(dane_No_Churn$MonthlyCharges)
+wynik6.2<-wskazniki_rozporszenia(dane_No_Churn$TotalCharges)
+
+tabela.2b<-bind_rows(
+  tenure=wynik4.2,
+  MonthlyCharges=wynik5.2,
+  TotalCharges = wynik6.2,
+  .id = "zmienna"
+)
+
+
+tab2b <- xtable( tabela.2b, digits = 3, row.names = TRUE, caption = "Miary rozproszenia dla klientów którzy nie zrezygnowali", label = "tab:tabela2b",align=c("","|p{2.8cm}|","p{2.1 cm}|","p{2.3 cm}|","p{2.6 cm}|","p{2.7cm}|"))
+print(tab2b, type = "latex", table.placement = "H", comment=FALSE,include.rownames = FALSE,floating=TRUE)
+
+
+
+```
+Z zestawienia tabel \ref{tab:tabela2a} i \ref{tab:tabela2b} można wywnioskować, że lojalni klienci mają większe rozproszenie wszystkich miar.
+Klienci rezygnujący zwykle są bardziej podobni do siebie pod względem długości współpracy (zmienna tenure) i wykazują mniej zróżnicowane wydatki (zmienne MonthlyCharges i TotalCharges).
+
+
+```{r histogramy,fig.width=5, fig.height=6, fig.cap="Histogramy dla zmiennych ilościowych (tenure, MonthlyCharges, TotalCharges) z podziałem na odchodzących i lojalnych klientów"}
+histogramy <- list()
+for(nazwa in nazwy.n){
+    p1<-histogram(dane_Churn,nazwa, "salmon")+labs(subtitle = "dla odchodzących klientów")
+    p2<-histogram(dane_No_Churn,nazwa, "palegreen")+labs(subtitle = "dla lojalnych klientów")
+    histogramy<-append(histogramy, list(p1,p2))
+}
+
+wrap_plots(histogramy,ncol=2)
+```
+Z zestawienia histogramów z podziałem na dwie grupy klientów (Rysunek \ref{fig:histogramy}) wynikają następujące obserwacje i wnioski:
+
+* Histogram zmiennej tenure dla byłych klientów jest prawostronnie skośny, ze skośnością `r round(skewness(dane_Churn$tenure,na.rm=TRUE),2)` sugerując,że klienci odchodzą raczej po krótkim czasie współpracy z firmą. Histogram zmiennej tenure dla lojalnych klientów jest symetryczny, zbliżony do rozkładu jednostajnego, posiada skośność równą `r round(skewness(dane_No_Churn$tenure,na.rm=TRUE),2)`  
+* Z histogramów zmiennej MonthlyCharges wynika, że byli klienci płacili miesięcznie więcej niż klienci, którzy nie zrezygnowali. Dla klientów którzy zrezygnowali rozkład jest dwu-modalny, lewostronnie skośny, ze skośnością równą `r round(skewness(dane_Churn$MonthlyCharges,na.rm=TRUE),2)`. Natomiast dla lojalnych klientów wykres jest w przybliżeniu symetryczny ze skośnością `r round(skewness(dane_No_Churn$MonthlyCharges,na.rm=TRUE),2)`
+* Rozkłady zmiennej TotalCharges charakteryzują się podobieństwem w obu grupach i pozostają prawostronnie skośne ze skośnościami `r round(skewness(dane_Churn$TotalCharges,na.rm=TRUE),2)` i `r round(skewness(dane_No_Churn$TotalCharges,na.rm=TRUE),2)`
+
+
+
+```{r wykresy gęstości2}
+wykres_gestosci2<-function(cecha){
+  ggplot(dane,aes(x=.data[[cecha]],group=Churn, fill=Churn))+
+    geom_density(color="black",alpha=0.5)+
+    labs(x=cecha)+
+    ggtitle(paste("Wykres gęstości\n zmiennej",cecha,"\nz podziałem na zmienną Churn"))+
+    theme_light()}
+```
+
+```{r wg1, fig.width=4, fig.height=2.5, fig.cap="Porównanie rozkładu zmiennej tenure dla dwóch grup: lojalnych i odchodzących klientów (gęstości empiryczne)"}
+wykres_gestosci2("tenure")
+```
+Wykres gęstości zmiennej tenure (Rysunek \ref{fig:wg1}) potwierdza istotne różnice w długości współpracy między klientami lojalnymi i byłymi. Okres współpracy klientów lojalnych jest bardziej zróżnicowany i ma charakter zbliżony do rozkładu jednostajnego, natomiast klienci którzy rezygnują, wykazują tendencję do odchodzenia głównie na początku współpracy z firmą.
+```{r wg2,fig.width=4, fig.height=2.5, fig.cap="Porównanie rozkładu zmiennej MonthlyCharges dla dwóch grup: lojalnych i odchodzących klientów (gęstości empiryczne)"}
+wykres_gestosci2("MonthlyCharges")
+```
+Rozkład zmiennej MonthlyCharges (Rysunek \ref{fig:wg2}) wskazuje, że lojalni klienci najczęściej płacą miesięcznie niższe stawki, natomiast klienci, którzy rezygnują, ponoszą zazwyczaj wyższe opłaty.
+
+```{r wg3,fig.width=4, fig.height=2.5, fig.cap="Porównanie rozkładu zmiennej TotalCharges dla dwóch grup: lojalnych i odchodzących klientów (gęstości empiryczne)"}
+wykres_gestosci2("TotalCharges")
+```
+Rozkłady zmiennej TotalCharges (Rysunek \ref{fig:wg3}) są podobne w obu grupach klientów. Jednak prawdopodobieństwo ponoszenia najniższych opłat jest wyższe dla klientów lojalnych.
+
+```{r pudełkowe2,echo=FALSE}
+wykres_pudełkowy2<-function(cecha) {
+  ggplot(dane,aes(x=Churn,y=.data[[cecha]], fill=Churn))+
+    geom_violin(trim=FALSE)+
+    geom_boxplot(width=0.2,show.legend = FALSE)+
+    labs(x="Churn",y="liczebność")+
+    ggtitle(paste("Wykres pudełkowy\n zmiennej",cecha, "\nz podziałem na zmienną Churn"))+
+    theme_light()}
+
+```
+
+```{r p1,fig.width=4, fig.height=2.5 ,fig.cap="Porównanie rozkładu zmiennej tenure dla dwóch grup: lojalnych i odchodzących klientów (wykresy skrzypcowe)"}
+wykres_pudełkowy2("tenure")
+```
+Wykresy skrzypcowe i pudełkowe zmiennej tenure (Rysunek \ref{fig:p1}) wskazują na istotne różnice między grupami klientów. Lojalni klienci charakteryzują się bardziej zróżnicowanym okresem współpracy, natomiast klienci, którzy odeszli, zwykle współpracują z firmą przez krótki czas, co widać po dużym zagęszczeniu wartości przy niskich poziomach tenure oraz zdecydowanie niższej medianie.
+```{r p2,fig.width=4, fig.height=2.5, fig.cap="Porównanie rozkładu zmiennej MonthlyCharges dla dwóch grup: lojalnych i odchodzących klientów (wykresy skrzypcowe)"}
+wykres_pudełkowy2("MonthlyCharges")
+```
+Z wykresów skrzypcowych i pudełkowych dla zmiennej MonthlyCharges (Rysunek \ref{fig:p2}) można wywnioskować, że wśród klientów lojalnych istnieje dużo większa grupa płacąca niższe miesięczne stawki, co widać po dużym zagęszczeniu wartości przy niskich poziomach. W przypadku klientów, którzy odeszli, wykres pokazuje odwrotną tendencję, czyli największe zagęszczenie występuje przy wyższych poziomach opłat.
+
+```{r p3, fig.width=4, fig.height=2.5, fig.cap="Porównanie rozkładu zmiennej TotalCharges dla dwóch grup: lojalnych i odchodzących klientów (wykresy skrzypcowe)"}
+wykres_pudełkowy2("TotalCharges")
+```
+
+Wykresy skrzypcowe i pudełkowe zmiennej TotalCharges (Rysunek \ref{fig:p3}) są podobne w obu grupach klientów. Jednak opłaty całkowite dla byłych klientów mają niższą medianę oraz większe zagęszczenie wartości przy niskich poziomach w porównaniu do klientów lojalnych. Dodatkowo na podstawie wartości odstających w grupie byłych klientów można wywnioskować, że klienci rezygnujący rzadko generują dla firmy duży zysk.
+
+
+```{r rozrzuty, echo=FALSE, fig.width=6, fig.cap="Analiza zależności dla par zmiennych ciągłych (tenure, MonthlyCharges, TotalCharges), z podziałem na odchodzących i lojalnych klientów (wykresy rozrzutu)"}
+rozrzuty<-list()
+for(i in seq_along(nazwy.n)){
+  for(j in seq_along(nazwy.n)){
+    if(i<j){
+      p1<-wykres_rozrzutu(dane_Churn,nazwy.n[i],nazwy.n[j],"salmon")+labs(subtitle = "dla odchodzących klientów")
+      p2<-wykres_rozrzutu(dane_No_Churn,nazwy.n[i],nazwy.n[j],"palegreen")+labs(subtitle = "dla lojalnych klientów")
+      rozrzuty<-append(rozrzuty,list(p1,p2))
+    }
+  }
+}
+
+wrap_plots(rozrzuty,ncol=2)
+```
+Na wykresach zależności (Rysunek \ref{fig:rozrzuty}), podobnie jak w przypadku analizy bez podziału na grupy, pojawiają się dość logiczne, liniowe zależności między TotalCharges i MonthlyCharges oraz między TotalCharges i tenure. Różnicę między grupami klientów pokazuje wykres rozrzutu zmiennej MonthlyCharges względem tenure. W przypadku klientów lojalnych zależność między tymi zmiennymi nie jest widoczna, punkty są równomiernie rozłożone. Natomiast w grupie klientów, którzy rezygnują, rzadko pojawiają się rekordy łączące długi okres współpracy z niskimi opłatami miesięcznymi.
+
+
+## Analiza zmiennych jakościowych z podziałem na lojalnych i odchodzących klientów
+
+Zmienne uwzględnione w analizie to te, w których proporcje różnią się najbardziej między grupami klientów.
+
+
+```{r tabelki dla danych jakościowych, results="asis"}
+w1.1<-tabela(dane_Churn$OnlineSecurity)
+w2.1<-tabela(dane_Churn$TechSupport)
+w3.1<-tabela(dane_Churn$InternetService)
+w4.1<-tabela(dane_Churn$PaymentMethod)
+w5.1<-tabela(dane_Churn$PaperlessBilling)
+w6.1<-tabela(dane_Churn$Contract)
+
+tabelka1 <- bind_rows(
+  OnlineSecurity = w1.1,
+  TechSupport = w2.1,
+  InternetService = w3.1,
+  PaymentMethod=w4.1,
+  PaperlessBilling=w5.1,
+  Contract=w6.1,
+  .id = "zmienna")
+
+tabelka1 <- tabelka1 %>%
+group_by(zmienna) %>%
+mutate(zmienna = ifelse(row_number() == 1, zmienna, "")) %>%
+ungroup()
+
+tabelaa1 <- xtable( tabelka1, caption = "Miary wybranych zmiennych jakosciowych dla odchodzących klientów", label = "tab:tabela_jakosciowa1",align=c("","|p{3cm}|","p{5cm}|","p{2cm}|","p{2cm}|"))
+print(tabelaa1, type = "latex", table.placement = "H", comment=FALSE,include.rownames = FALSE, floating=TRUE)
+
+w1.2<-tabela(dane_No_Churn$OnlineSecurity)
+w2.2<-tabela(dane_No_Churn$TechSupport)
+w3.2<-tabela(dane_No_Churn$InternetService)
+w4.2<-tabela(dane_No_Churn$PaymentMethod)
+w5.2<-tabela(dane_No_Churn$PaperlessBilling)
+w6.2<-tabela(dane_No_Churn$Contract)
+
+tabelka2 <- bind_rows(
+  OnlineSecurity = w1.2,
+  TechSupport = w2.2,
+  InternetService = w3.2,
+  PaymentMethod=w4.2,
+  PaperlessBilling=w5.2,
+  Contract=w6.2,
+  .id = "zmienna")
+
+tabelka2 <- tabelka2 %>%
+group_by(zmienna) %>%
+mutate(zmienna = ifelse(row_number() == 1, zmienna, "")) %>%
+ungroup()
+
+tabelaa2 <- xtable( tabelka2, caption = "Miary wybranych zmiennych jakosciowych dla lojalnych klientów", label = "tab:tabela_jakosciowa2",align=c("","|p{3cm}|","p{5cm}|","p{2cm}|","p{2cm}|"))
+print(tabelaa2, type = "latex", table.placement = "H", comment=FALSE,include.rownames = FALSE, floating=TRUE)
+```
+
+Z zestawienia tabel \ref{tab:tabela_jakosciowa1} i \ref{tab:tabela_jakosciowa2} można odczytać,że:  
+
+* Aż `r w1.1$Proporcja[w1.1$Kategoria == "No"]` klientów odchodzących nie posiada zabezpieczenia internetowego (zmienna OnlineSecurity), w przypadku klientów lojalny z tej usługi niekorzysta `r w1.2$Proporcja[w1.2$Kategoria == "No"]`.
+
+* `r w2.1$Proporcja[w2.1$Kategoria == "No"]`  klientów odchodzących oraz `r w2.2$Proporcja[w2.2$Kategoria == "No"]` klientów lojalnych nie korzysta z usług serwisu technicznego (zmienna TechSupport).
+
+* Dostępu do Internetu nie posiada jedynie `r w3.1$Proporcja[w3.1$Kategoria == "No"]` odchodzących klientów, a w przypadku klientów lojalnych jest to aż `r w3.2$Proporcja[w3.2$Kategoria == "No"]`.
+
+* Byli klienci w zdecydowanej wiekszości korzystają ze światłowodu (`r w3.1$Proporcja[w3.1$Kategoria == "Fiber optic"]`).
+
+* Byli klienci najczęściej decydowali się płacić za pomocą `r w4.1$Kategoria[which.max(w4.1$Liczność)]`, a u klientów lojalnych wszystkie możliwe metody płatności zostały wybierane z podobną czestością.  
+
+* Zdecydowa większość, czyli aż `r w5.1$Proporcja[w5.1$Kategoria=="Yes"]` klientów odchodzących jest zainteresowanych fakturą elektroniczną.
+
+* Jeszcze większe procenty możemy zaobserwować analizując zmienną Contract, gdzie `r w6.1$Proporcja[w6.1$Kategoria=="Month-to-month"]` klientów odchodzących wybiera bardziej elastyczne kontrakty miesięczne, podczas gdy lojalni klienci równie chętnie sięgają po dłuższe kontrakty.  
+
+
+
+```{r piecharty, echo=FALSE,fig.width=12, fig.height=4.75, fig.cap="Diagramy kołowe dla wybranych zmiennych jakościowych binarnych z podziałem na odchodzących i lojalnych klientów"}
+kolowy<-function(dane,cecha){
+  tabelka<-tabela(dane[[cecha]])
+  tabelka <- tabelka[tabelka$Liczność > 0, ]
+  ggplot(tabelka, aes(x = " ", y = Liczność, fill = Kategoria)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = Liczność),position = position_stack(vjust = 0.5), color = "black",size=2) +
+    coord_polar("y") +
+    scale_fill_brewer(palette = "Pastel2") +
+    labs(
+      x = "Kategoria",
+      y = "Liczność"
+    ) +
+    ggtitle(paste("Liczności zmiennej", cecha, sep = "\n"))+
+    theme_void()
+}
+potrzebne <- c("OnlineSecurity","TechSupport", "PaperlessBilling")
+pie=list()
+for(nazwa in potrzebne){
+    p1<-kolowy(dane_Churn,nazwa)+labs(subtitle = "dla odchodzących klientów")
+    p2<-kolowy(dane_No_Churn,nazwa)+labs(subtitle = "dla lojalnych klientów")
+    pie<-append(pie,list(p1,p2))
+}
+wrap_plots(pie, ncol=2)+theme(plot.margin=margin(2,30,2,30))
+```
+
+
+Z zestawienia wykresów kołowych zmiennych jakościowych (Rysunek \ref{fig:piecharty}) można wywnioskować, że:
+
+Klienci, którzy odeszli z firmy, znacznie rzadziej korzystali z usług Online Security i Tech Support oraz częściej decydowali się na wybór rozliczeń bezpapierowych (zmienna PaperlessBilling). W przypadku klientów lojalnych cechy te posiada około połowa grupy.
+
+
+```{r piecharty2, echo=FALSE,fig.width=7,fig.height=7, fig.cap="Diagramy kołowe dla wybranych zmiennych jakościowych nominalnych z podziałem na odchodzących i lojalnych klientów"}
+potrzebne2 <- c("PaymentMethod","InternetService", "Contract")
+pie2=list()
+for(nazwa in potrzebne2){
+    p1<-kolowy(dane_Churn,nazwa)+labs(subtitle = "dla odchodzących klientów")
+    p2<-kolowy(dane_No_Churn,nazwa)+labs(subtitle = "dla lojalnych klientów")
+    pie2<-append(pie2,list(p1,p2))
+}
+wrap_plots(pie2, ncol=2)
+```
+
+
+Z zestawienia wykresów kołowych zmiennych jakościowych nominalnych (Rysunek \ref{fig:piecharty2}) można wywnioskować, że:
+
+
+* Jeśli chodzi o internet, byli klienci najczęściej korzystali ze światłowodu, podczas gdy w grupie lojalnych klientów wszystkie dostępne możliwości wystepują z podobną częstością.
+
+* Podobną dysproporcję można zauważyć przy metodzie płatności. Wśród lojalnych klientów wszystkie metody są rozłożone w podobny sposób, natomiast wśród byłych klientów dominuje płatność typu electronic check.
+
+* Klienci, którzy rezygnują duża rzadziej decydują sie podpsywać roczne i dwuletnie kontrakty. Podczas gdy wśród lojalnych klientów 3 rodzaje kontraktów są równomiernie rozłożone, u byłych klientów zdecydowanie dominują kontrakty miesięczne.
+
+# Etap 4 - Podsumowanie i wnioski z przeprowadzonej analizy
+
+## Podsumowanie
+
+a) Podsumowanie i wnioski z poszególnych etapów analizy
+
+* [Etap 1 - Przygotowanie danych. Podstawowe informacje o danych]
+
+Zbiór danych wykorzystany do analizy to "WA_Fn-UseC_-Telco-Customer-Churn.csv". Jest on dostępny na serwisie [kaggle](https://www.kaggle.com/datasets/blastchar/telco-customer-churn). Dane zawierają `r dim(dane_pierwotne)[1]` obserwacje oraz `r length(nazwy.n)` zmienne o charakterze ilościowym i `r length(nazwy.j)` zmiennych jakościowych. W danych występuje `r sum(is.na(dane_pierwotne$TotalCharges))` brakujących wartości w zmiennej TotalCharges, zakodowanych jako NA. W celu przygotowania danych do dalszej analizy zmienna customerID została usunięta i a typ danych dla zmiennej SeniorCitizen został zmieniony. 
+
+* [Etap 2 - Analiza opisowa - wskaźniki sumaryczne i wykresy]  
+
+Rozkłady zmiennych ilościowych są zróżnicowane i niesymetryczne. Największą skosność równą `r round(skewness(dane$TotalCharges,na.rm=TRUE),2)` ma zmienna TotalCharges. Z analizy zależności wynika, że zarówno długość korzystania z usług (tenure), jak i wysokość miesięcznych opłat (MonthlyCharges) wpływają na łączny koszt ponoszony przez klienta (TotalCharges).Zależności te są dość logiczne(tj. im więcej klient płaci firmie miesięcznie tym wyższe będą jego opłaty całkowite, tak samo dłuższe korzystanie z usług zwiększa całkowitą sumę opłat) Nie zaobserwowano natomiast wyraźnej zależności między długością korzystania z usług a miesięcznymi opłatami. W przypadku zmiennych jakościowych większość klientów nie korzysta z usług dodatkowych, takich jak OnlineSecurity czy TechSupport.Zaskakującym wnioskiem z analizy jest fakt, iż aż `r wynik3$Proporcja[wynik3$Kategoria == "No"]` ankietowanych nie posiada dostępu do Internetu (zmienna InternetService).Klienci decydują się  na 4 metody płatnicze (zmienna PaymentMethod). Są to kolejno od najbardziej do najmniej popularnych: czek elektroniczny, czek wysłany pocztą, przelew bankowy oraz płatność kartą kredytową. Zdecydowana większość klientów korzysta z usług telefonicznych (PhoneService) oraz preferuje elastyczne umowy typu month-to-month. Spora grupa osób decyduje się również na elektroniczne faktury. Jednocześnie w przypadku usług takich jak MultipleLines, StreamingMovies czy StreamingTV klienci są wyraźnie podzieleni(liczba użytkowników i nieużytkowników jest bardzo zbliżona).
+
+* [Etap 3 - Analiza opisowa z podziałem na grupy]
+
+Klienci lojalni charakteryzują się bardziej zróżnicowanym okresem współpracy (tenure), płacą raczej niższe miesięczne opłaty (MonthlyCharges) oraz częściej korzystają z dodatkowych usług, takich jak OnlineSecurity i TechSupport, w porównaniu do klientów, którzy rezygnują. Klienci odchodzący zazwyczaj współpracują z firmą krótko, ponoszą wyższe miesięczne opłaty i rzadziej korzystają z dodatkowych usług. Częściej korzystają ze światłowodu, decydują się na płatności typu electronic check i wybierają rozliczenia bezpapierowe( PaperlessBilling)
+
+b) Profil klientów firmy:
+
+Klienci korzystający z oferty firmy wykazują się zróżnicowaniem jeśli chodzi o okres współpracy i ponoszone koszty. Jednak można zaobserwować istotne różnice pomiędzy grupami klientów lojalnych i tych którzy odeszli.
+Klienci lojalni częściej korzystają z dodatkowych usług takich jak OnlineSecurity czy TechSupport.
+Najczęściej wybieraną usługą internetową (zmienna InternetService) wśród wszystkich klientów oraz klientów odchodzących jest światłowód, podczas gdy lojalni klienci korzystają też z DSL. Natomiast najczęstrza metoda płatności (zmienna PaymentMethod) to electronic check. Chociaż, podobnie jak z internetem, na ten wynik zdecydowanie bardziej wpływają byli klienci, podczas gdy klienci lojalni wybierają metody płatności, bez wyraźnej dominacji jednej formy. Klienci preferują korzystać z rozliczeń bezpapierowych. Usługi,z których klienci korzystają najczęściej to przede wszystkim PhoneService, inne dość popularne usługi (korzysta z nich około połowa klientów) to  MultipleLines, StreamingMovies, StreaminTV 
+
+
+c) Przyczyny i przeciwdziałanie odchodzeniu klientów:
+
+* Główną przyczyną odchodzenia klientów wydaje się być wysoki koszt w połączeniu z krótkim okresem korzystania z usług. Takie zestawienie sugeruje, że klienci ponoszą większe koszty już na początku współpracy, co może ich zniechęcać i prowadzić do szybszej rezygnacji.  
+Kolejną przyczyna może być ograniczone korzystanie z usług dodatkowych (np OnlineSecurity, TechSupport), można przypuszczać, że odchodzący klienci nie dostrzegają pełnego potencjału usług firmy.  
+Ponadto klienci odchodzący częściej korzystają ze światłowodu i wybierają electronic check jako formę płatności a rzadziej decydują się na roliczenia bezpapierowe.
+Światłowód jest zazwyczaj droższy niż DSL, co jest spójne z wcześniejszą obserwacją o wyższych miesięcznych opłatach wśród klientów odchodzących. Wyższe koszta światłowodu mogą mieć niekorzystny wpływ na klientów i przyczyniać się do ich odchodzenia. 
+Z kolei rezygnacje klientów decydujących się na płatności typu electronic check może wskazywać na mniejszą wygodę tej metody płatności lub mniej zautomatyzowany proces co zniechęca klientów do kontynuowania współpracy.
+Podobnie nalezy dopuścic możliwośc istnienia problemów z procesem wystawiania e-faktur, które stanowią częsty wybór wśród klientów rezygnujących.
+
+* W celu przeciwdziałaniu odchodzeniu klientów firma powinna podjąć następujące kroki:  
+1. Oferować promocje i specjalne pakiety dla nowych klientów, szczególnie tych którzy korzystają ze światłowodu, aby skłonić ich do długotrwałej współpracy.  
+2. Zachęcać nowych klientów do korzystania z usług dodatkowych, takich jak OnlineSecurity i TechSupport, w celu zwiększenia ich zaangażowania.  
+3. Przeprowadzić dodatkowe analizy (np ankiety wśród klientów) w celu zbadania potencjalnych problemów związanych z płatnościami typu electronic check oraz elektronicznymi fakturami a następnie w oparciu o wyniki usprawnić proces płatności.
